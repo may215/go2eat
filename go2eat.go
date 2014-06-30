@@ -13,13 +13,8 @@ import (
 	"os/signal"
 	"runtime"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
-)
-
-var (
-	mutex = new(sync.Mutex)
 )
 
 func init() {}
@@ -54,6 +49,11 @@ type handlerError struct {
 type Url struct {
 	Category string
 	Link     string
+}
+
+type Content struct {
+	Category string
+	Data     string
 }
 
 func readUrlsList(configuration *Configuration) ([]Url, *handlerError) {
@@ -160,12 +160,10 @@ func fetcher(configuration *Configuration, feeds map[string][]string) {
 			os.Exit(1)
 		}
 	}()
-	var wg sync.WaitGroup
 
+	done := make(chan *Content)
 	for _, url := range configuration.Urls {
-		wg.Add(1)
 		go func(url Url) {
-			defer wg.Done()
 			client := timeoutDialler(configuration)
 
 			if configuration.BeforeEat != nil {
@@ -194,12 +192,22 @@ func fetcher(configuration *Configuration, feeds map[string][]string) {
 			if configuration.AfterEat != nil {
 				str = configuration.AfterEat(str)
 			}
-			mutex.Lock()
-			feeds[url.Category] = append(feeds[url.Category], str)
-			mutex.Unlock()
+
+			var cn = new(Content)
+			cn.Category = url.Category
+			cn.Data = str
+			done <- cn
 		}(url)
 	}
-	wg.Wait()
+	for {
+		select {
+		case r := <-done:
+			feeds[r.Category] = append(feeds[r.Category], r.Data)
+			if len(feeds) == len(configuration.Urls) {
+				return
+			}
+		}
+	}
 }
 
 func returnData(feeds *map[string][]string) *map[string][]string {
